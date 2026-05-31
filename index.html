@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tra cứu mã số thuế</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4efe7;
+        --panel: rgba(255, 255, 255, 0.86);
+        --text: #14213d;
+        --muted: #5f6b7a;
+        --accent: #0f766e;
+        --accent-2: #b45309;
+        --border: rgba(20, 33, 61, 0.12);
+        --shadow: 0 20px 60px rgba(20, 33, 61, 0.14);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: Inter, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(15, 118, 110, 0.18), transparent 32%),
+          radial-gradient(circle at top right, rgba(180, 83, 9, 0.16), transparent 28%),
+          linear-gradient(180deg, #fbf8f2 0%, var(--bg) 100%);
+      }
+
+      .wrap {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 32px 20px 48px;
+      }
+
+      .hero {
+        margin-bottom: 20px;
+      }
+
+      .eyebrow {
+        display: inline-block;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(15, 118, 110, 0.12);
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 14px 0 8px;
+        font-size: clamp(30px, 5vw, 52px);
+        line-height: 1.05;
+      }
+
+      .sub {
+        margin: 0;
+        max-width: 720px;
+        font-size: 16px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(14px);
+      }
+
+      .search {
+        padding: 20px;
+        margin-top: 24px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1.5fr 0.9fr auto;
+        gap: 12px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      input,
+      select,
+      button {
+        width: 100%;
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        font: inherit;
+        padding: 14px 16px;
+        background: #fff;
+        color: var(--text);
+      }
+
+      input:focus,
+      select:focus {
+        outline: 2px solid rgba(15, 118, 110, 0.22);
+        border-color: rgba(15, 118, 110, 0.45);
+      }
+
+      button {
+        border: none;
+        cursor: pointer;
+        font-weight: 700;
+        background: linear-gradient(135deg, var(--accent) 0%, #0ea5a0 100%);
+        color: white;
+        box-shadow: 0 10px 24px rgba(15, 118, 110, 0.22);
+        align-self: end;
+      }
+
+      button:hover {
+        filter: brightness(1.02);
+      }
+
+      .hint {
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .quick {
+        margin-top: 16px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .chip {
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.72);
+        padding: 10px 12px;
+        border-radius: 999px;
+        font-size: 13px;
+        cursor: pointer;
+        color: var(--text);
+      }
+
+      .results {
+        margin-top: 20px;
+        padding: 20px;
+      }
+
+      .status {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+      }
+
+      .status strong {
+        font-size: 18px;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(180, 83, 9, 0.1);
+        color: var(--accent-2);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .field {
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.76);
+        border: 1px solid var(--border);
+      }
+
+      .field .name {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+      }
+
+      .field .value {
+        font-size: 15px;
+        line-height: 1.5;
+        word-break: break-word;
+      }
+
+      pre {
+        margin: 16px 0 0;
+        padding: 16px;
+        overflow: auto;
+        border-radius: 16px;
+        background: #0f172a;
+        color: #dbeafe;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+
+      .error {
+        color: #b91c1c;
+      }
+
+      @media (max-width: 780px) {
+        .grid,
+        .cards {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <section class="hero">
+        <span class="eyebrow">Mã số thuế</span>
+        <h1>Tra cứu thông tin doanh nghiệp nhanh</h1>
+        <p class="sub">
+          Nhập mã số thuế, CMND/căn cước, tên công ty, hoặc tên người đại diện để
+          gọi API local và lấy về dữ liệu gọn: tên, mã số thuế, người đại diện,
+          tình trạng, quản lý bởi, địa chỉ.
+        </p>
+      </section>
+
+      <section class="card search">
+        <div class="grid">
+          <div>
+            <label for="query">Từ khóa tra cứu</label>
+            <input id="query" placeholder="Ví dụ: 1102168726, VŨ CHÍ KHANG, tên công ty..." />
+          </div>
+          <div>
+            <label for="type">Kiểu tra cứu</label>
+            <select id="type">
+              <option value="auto">Tự động</option>
+              <option value="enterpriseTax">Mã số thuế công ty</option>
+              <option value="personalTax">Mã số thuế cá nhân</option>
+              <option value="identity">CMND, căn cước</option>
+              <option value="enterpriseName">Tên công ty</option>
+              <option value="legalName">Giám đốc công ty</option>
+            </select>
+          </div>
+          <button id="searchBtn">Tra cứu</button>
+        </div>
+
+        <div class="quick">
+          <button class="chip" data-query="" data-type="auto" type="button">Xoá</button>
+        </div>
+
+        <p class="hint">API mặc định: <span id="apiBaseLabel"></span></p>
+      </section>
+
+      <section class="card results" aria-live="polite">
+        <div class="status">
+          <strong>Kết quả</strong>
+          <span class="badge" id="stateBadge">Chờ tra cứu</span>
+        </div>
+
+        <div class="cards" id="cards"></div>
+        <pre id="raw">Chưa có dữ liệu.</pre>
+      </section>
+    </div>
+
+    <script>
+      const apiBase = (window.__API_BASE__ || (window.location.hostname === 'localhost' ? 'http://localhost:3000' : window.location.origin));
+      const apiBaseLabel = document.getElementById('apiBaseLabel');
+      const queryInput = document.getElementById('query');
+      const typeSelect = document.getElementById('type');
+      const searchBtn = document.getElementById('searchBtn');
+      const stateBadge = document.getElementById('stateBadge');
+      const cards = document.getElementById('cards');
+      const raw = document.getElementById('raw');
+
+      apiBaseLabel.textContent = apiBase.replace(/(^https?:\/\/)/, '');
+
+      function setBadge(text, error = false) {
+        stateBadge.textContent = text;
+        stateBadge.classList.toggle('error', error);
+      }
+
+      function renderResult(payload) {
+        const data = payload && payload.data ? payload.data : null;
+
+        if (!payload || !payload.ok || !data) {
+          cards.innerHTML = '';
+          raw.textContent = JSON.stringify(payload, null, 2);
+          setBadge(payload && payload.ok ? 'Không có kết quả' : 'Lỗi tra cứu', !(payload && payload.ok));
+          return;
+        }
+
+        const fields = [
+          ['Tên', data.ten],
+          ['Mã số thuế', data.ma_so_thue],
+          ['Người đại diện', data.nguoi_dai_dien],
+          ['Tình trạng', data.tinh_trang],
+          ['Quản lý bởi', data.quan_ly_boi],
+          ['Địa chỉ', data.dia_chi]
+        ];
+
+        cards.innerHTML = fields
+          .map(([label, value]) => `
+            <div class="field">
+              <span class="name">${label}</span>
+              <div class="value">${escapeHtml(value || '—')}</div>
+            </div>
+          `)
+          .join('');
+
+        raw.textContent = JSON.stringify(payload, null, 2);
+        setBadge(`Đã tra cứu: ${data.ma_so_thue || 'không rõ'}`);
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#39;');
+      }
+
+      async function search() {
+        const query = queryInput.value.trim();
+        const type = typeSelect.value;
+
+        if (!query) {
+          setBadge('Nhập từ khóa trước', true);
+          return;
+        }
+
+        setBadge('Đang tra cứu...');
+        cards.innerHTML = '';
+        raw.textContent = 'Đang tải...';
+
+        const url = new URL(`${apiBase}/api/lookup`);
+        url.searchParams.set('q', query);
+        url.searchParams.set('type', type);
+
+        try {
+          const response = await fetch(url);
+          const payload = await response.json();
+          renderResult(payload);
+        } catch (error) {
+          setBadge('Lỗi kết nối', true);
+          cards.innerHTML = '';
+          raw.textContent = String(error);
+        }
+      }
+
+      searchBtn.addEventListener('click', search);
+      queryInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          search();
+        }
+      });
+
+      document.querySelectorAll('.chip').forEach((button) => {
+        button.addEventListener('click', () => {
+          const query = button.getAttribute('data-query') || '';
+          const type = button.getAttribute('data-type') || 'auto';
+          queryInput.value = query;
+          typeSelect.value = type;
+
+          if (!query) {
+            cards.innerHTML = '';
+            raw.textContent = 'Chưa có dữ liệu.';
+            setBadge('Đã xoá');
+            return;
+          }
+
+          search();
+        });
+      });
+    </script>
+  </body>
+</html>
