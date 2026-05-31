@@ -16,7 +16,7 @@ npm install
 npm start
 ```
 
-Mặc định chạy ở `http://localhost:3000`.
+Mặc định bind trên `0.0.0.0` và truy cập qua `http://localhost:3000` trên máy cục bộ, hoặc qua IP/domain của máy chủ khi deploy.
 
 ### Chạy với biến môi trường
 
