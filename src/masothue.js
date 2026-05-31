@@ -218,6 +218,10 @@ function isLikelyTaxCodeQuery(query) {
   return /^\d[\d-]*$/.test(normalizeText(query));
 }
 
+function inferAutoSearchType(query) {
+  return isLikelyTaxCodeQuery(query) ? 'enterpriseTax' : 'enterpriseName';
+}
+
 function isGenericStructuredName(name) {
   const normalized = normalizeText(name);
   return !normalized || /mã số thuế|tra cứu|masothue/i.test(normalized);
@@ -728,11 +732,12 @@ function extractCandidatesFromSearchHtml(html) {
 async function lookupMasothue(query, type = 'auto') {
   const safeQuery = String(query || '').trim();
   const safeType = SEARCH_TYPE_MAP[type] ? type : 'auto';
-  const effectiveType = isLikelyTaxCodeQuery(safeQuery) ? 'auto' : safeType;
+  const effectiveType = safeType === 'auto' ? inferAutoSearchType(safeQuery) : safeType;
 
   if (!safeQuery) {
     const error = new Error('Thiếu tham số query');
     error.status = 400;
+    error.code = 'BAD_REQUEST';
     throw error;
   }
 
@@ -769,11 +774,12 @@ async function lookupMasothue(query, type = 'auto') {
     return {
       source,
       ok: false,
+      code: 'NOT_FOUND',
       data: null,
       confidence: 0,
       strongMatch: false,
       uncertain: true,
-      reason: 'masothue.com không trả về kết quả đủ tin cậy',
+      reason: 'Không tìm thấy kết quả phù hợp',
       ajax: ajaxResult || null
     };
   }
@@ -789,6 +795,7 @@ async function lookupMasothue(query, type = 'auto') {
   return {
     source,
     ok: true,
+    code: 'OK',
     confidence,
     strongMatch,
     uncertain: !strongMatch,

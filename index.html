@@ -253,11 +253,15 @@
             <label for="type">Kiểu tra cứu</label>
             <select id="type">
               <option value="auto">Tự động</option>
-              <option value="enterpriseTax">Mã số thuế công ty</option>
-              <option value="personalTax">Mã số thuế cá nhân</option>
-              <option value="identity">CMND, căn cước</option>
-              <option value="enterpriseName">Tên công ty</option>
-              <option value="legalName">Giám đốc công ty</option>
+              <optgroup label="Doanh nghiệp / công ty">
+                <option value="enterpriseTax">Mã số thuế doanh nghiệp</option>
+                <option value="enterpriseName">Tên công ty / doanh nghiệp</option>
+                <option value="legalName">Giám đốc / người đại diện</option>
+              </optgroup>
+              <optgroup label="Cá nhân">
+                <option value="personalTax">Mã số thuế cá nhân</option>
+                <option value="identity">CMND / CCCD</option>
+              </optgroup>
             </select>
           </div>
           <button id="searchBtn">Tra cứu</button>
@@ -322,8 +326,14 @@
 
         if (!payload || !payload.ok || !data) {
           cards.innerHTML = '';
-          raw.textContent = JSON.stringify(payload, null, 2);
-          setBadge(payload && payload.ok ? 'Không có kết quả' : 'Lỗi tra cứu', !(payload && payload.ok));
+          raw.textContent = payload && payload.code === 'NOT_FOUND'
+            ? 'Không tìm thấy kết quả phù hợp.'
+            : JSON.stringify(payload, null, 2);
+          if (payload && payload.code === 'NOT_FOUND') {
+            setBadge('Không tìm thấy kết quả', false);
+          } else {
+            setBadge(payload && payload.ok ? 'Không có kết quả' : 'Lỗi tra cứu', !(payload && payload.ok));
+          }
           return;
         }
 
@@ -397,6 +407,7 @@
             cache: 'no-store'
           });
           const payload = await response.json();
+          payload.httpStatus = response.status;
           if (activeSearchId === searchId) {
             renderResult(payload);
           }

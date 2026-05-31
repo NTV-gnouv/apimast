@@ -7,6 +7,7 @@ const { lookupMasothue, buildSearchUrl } = require('./masothue');
 const app = express();
 const ROOT_DIR = path.resolve(__dirname, '..');
 const INDEX_FILE = path.join(ROOT_DIR, 'index.html');
+const API_GUIDE_FILE = path.join(ROOT_DIR, 'api-guide.html');
 const HOST = process.env.HOST || '0.0.0.0';
 const port = Number(process.env.PORT || 3000);
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '';
@@ -34,8 +35,40 @@ app.get('/index.html', (_req, res) => {
   res.sendFile(INDEX_FILE);
 });
 
+app.get('/api-guide', (_req, res) => {
+  res.sendFile(API_GUIDE_FILE);
+});
+
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
+});
+
+app.get('/api', (_req, res) => {
+  res.json({
+    ok: true,
+    name: 'Masothue API Proxy',
+    guide: '/api-guide',
+    endpoints: [
+      {
+        method: 'GET',
+        path: '/api/lookup',
+        query: ['q or query', 'type'],
+        description: 'Tra cứu theo từ khóa linh hoạt.'
+      },
+      {
+        method: 'GET',
+        path: '/api/company/:taxCode',
+        query: [],
+        description: 'Tra cứu nhanh theo mã số thuế.'
+      },
+      {
+        method: 'GET',
+        path: '/api/debug-lookup',
+        query: ['q or query', 'type'],
+        description: 'Trả dữ liệu debug chi tiết khi cần chẩn đoán.'
+      }
+    ]
+  });
 });
 
 app.get('/api/lookup', async (req, res) => {
@@ -44,8 +77,23 @@ app.get('/api/lookup', async (req, res) => {
     const type = req.query.type || 'auto';
     const result = await lookupMasothue(query, type);
 
+    if (!result.ok) {
+      const status = result.code === 'NOT_FOUND' ? 404 : 200;
+      return res.status(status).json({
+        ok: false,
+        code: result.code || 'NOT_FOUND',
+        error: result.reason || 'Không tìm thấy kết quả',
+        reason: result.reason || 'Không tìm thấy kết quả',
+        query: String(query || ''),
+        type: String(type || 'auto'),
+        searchUrl: buildSearchUrl(query, type),
+        source: result.source || ''
+      });
+    }
+
     res.json({
       ok: true,
+      code: result.code || 'OK',
       query: String(query || ''),
       type: String(type || 'auto'),
       searchUrl: buildSearchUrl(query, type),
@@ -95,8 +143,24 @@ app.get('/api/debug-lookup', async (req, res) => {
 app.get('/api/company/:taxCode', async (req, res) => {
   try {
     const result = await lookupMasothue(req.params.taxCode, 'auto');
+
+    if (!result.ok) {
+      const status = result.code === 'NOT_FOUND' ? 404 : 200;
+      return res.status(status).json({
+        ok: false,
+        code: result.code || 'NOT_FOUND',
+        error: result.reason || 'Không tìm thấy kết quả',
+        reason: result.reason || 'Không tìm thấy kết quả',
+        query: String(req.params.taxCode),
+        type: 'auto',
+        searchUrl: buildSearchUrl(req.params.taxCode, 'auto'),
+        source: result.source || ''
+      });
+    }
+
     res.json({
       ok: true,
+      code: result.code || 'OK',
       query: req.params.taxCode,
       type: 'auto',
       searchUrl: buildSearchUrl(req.params.taxCode, 'auto'),
