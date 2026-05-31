@@ -1,11 +1,39 @@
 const cheerio = require('cheerio');
 const { URL } = require('url');
+const fs = require('fs');
+const path = require('path');
 const puppeteer = require('puppeteer-core');
 
 const BASE_URL = 'https://masothue.com';
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 15000);
 const STRONG_MATCH_THRESHOLD = Number(process.env.STRONG_MATCH_THRESHOLD || 85);
-const BROWSER_EXECUTABLE_PATH = process.env.CHROME_PATH || process.env.CHROMIUM_PATH || '/usr/bin/google-chrome';
+const BROWSER_EXECUTABLE_CANDIDATES = [
+  process.env.PUPPETEER_EXECUTABLE_PATH,
+  process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+  process.env.CHROME_PATH,
+  process.env.CHROMIUM_PATH,
+  '/usr/bin/google-chrome',
+  '/usr/bin/google-chrome-stable',
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
+  '/snap/bin/chromium'
+].filter(Boolean);
+
+const WINDOWS_BROWSER_EXECUTABLE_CANDIDATES = process.platform === 'win32'
+  ? [
+      path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Chromium', 'Application', 'chrome.exe'),
+      path.join(process.env.LOCALAPPDATA || '', 'Chromium', 'Application', 'chrome.exe'),
+      path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+      path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Microsoft', 'Edge', 'Application', 'msedge.exe')
+    ]
+  : [];
+
+const ALL_BROWSER_EXECUTABLE_CANDIDATES = [
+  ...BROWSER_EXECUTABLE_CANDIDATES,
+  ...WINDOWS_BROWSER_EXECUTABLE_CANDIDATES
+];
 
 const SEARCH_TYPE_MAP = {
   auto: 'auto',
@@ -27,10 +55,33 @@ function collapseText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function resolveBrowserExecutablePath() {
+  for (const candidate of ALL_BROWSER_EXECUTABLE_CANDIDATES) {
+    if (typeof candidate !== 'string' || !candidate.trim()) {
+      continue;
+    }
+
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return '';
+}
+
 async function withBrowserPage(callback) {
+  const executablePath = resolveBrowserExecutablePath();
+  if (!executablePath) {
+    const error = new Error(
+      'Không tìm thấy Chrome/Chromium trên VPS. Hãy cài chromium hoặc đặt CHROME_PATH/PUPPETEER_EXECUTABLE_PATH trỏ tới binary trình duyệt.'
+    );
+    error.status = 500;
+    throw error;
+  }
+
   const browser = await puppeteer.launch({
     headless: 'new',
-    executablePath: BROWSER_EXECUTABLE_PATH,
+    executablePath,
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   });
 

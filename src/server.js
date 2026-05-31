@@ -8,7 +8,7 @@ const app = express();
 const ROOT_DIR = path.resolve(__dirname, '..');
 const INDEX_FILE = path.join(ROOT_DIR, 'index.html');
 const HOST = process.env.HOST || '0.0.0.0';
-const port = Number(process.env.PORT || 80);
+const port = Number(process.env.PORT || 3000);
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '';
 
 function parseAllowedOrigins(value) {
