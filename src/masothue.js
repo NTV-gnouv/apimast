@@ -1,9 +1,11 @@
 const cheerio = require('cheerio');
 const { URL } = require('url');
+const puppeteer = require('puppeteer-core');
 
 const BASE_URL = 'https://masothue.com';
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 15000);
 const STRONG_MATCH_THRESHOLD = Number(process.env.STRONG_MATCH_THRESHOLD || 85);
+const BROWSER_EXECUTABLE_PATH = process.env.CHROME_PATH || process.env.CHROMIUM_PATH || '/usr/bin/google-chrome';
 
 const SEARCH_TYPE_MAP = {
   auto: 'auto',
@@ -23,6 +25,163 @@ function normalizeText(value) {
 
 function collapseText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+async function withBrowserPage(callback) {
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    executablePath: BROWSER_EXECUTABLE_PATH,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  });
+
+  const page = await browser.newPage();
+  await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+  await page.setExtraHTTPHeaders({
+    'accept-language': 'vi-VN,vi;q=0.9,en;q=0.8'
+  });
+  page.setDefaultNavigationTimeout(REQUEST_TIMEOUT_MS);
+
+  try {
+    return await callback(page);
+  } finally {
+    try {
+      await page.close();
+    } catch (error) {
+      // ignore browser cleanup errors
+    }
+
+    try {
+      await browser.close();
+    } catch (error) {
+      // ignore browser cleanup errors
+    }
+  }
+}
+
+async function fetchPageHtmlWithBrowser(url) {
+  const result = await withBrowserPage(async (page) => {
+    await page.goto(url, { waitUntil: 'networkidle2' });
+    return {
+      html: await page.content(),
+      finalUrl: page.url(),
+      headers: {
+        'content-type': 'text/html; charset=utf-8'
+      }
+    };
+  });
+
+  if (/challenge-error-text|Enable JavaScript and cookies to continue/i.test(result.html)) {
+    const error = new Error('masothue.com đang chặn request tự động bằng challenge của Cloudflare');
+    error.status = 403;
+    error.html = result.html.slice(0, 1024);
+    throw error;
+  }
+
+  return result;
+}
+
+function extractJsonLdObjects($) {
+  const objects = [];
+
+  $('script[type="application/ld+json"]').each((_, script) => {
+    const raw = collapseText($(script).text());
+    if (!raw) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        objects.push(...parsed);
+      } else if (parsed && typeof parsed === 'object') {
+        objects.push(parsed);
+      }
+    } catch (error) {
+      // Ignore malformed JSON-LD blocks.
+    }
+  });
+
+  return objects;
+}
+
+function extractMetaContent($, selector) {
+  return collapseText($(selector).attr('content') || '');
+}
+
+function extractTitleData($) {
+  const title = collapseText($('title').first().text());
+  const match = title.match(/^(\d[\d-]*)\s*-\s*(.+?)(?:\s*-\s*MaSoThue)?$/i);
+
+  return {
+    title,
+    ma_so_thue: match ? match[1] : '',
+    ten: match ? match[2] : ''
+  };
+}
+
+function extractAddressFromDescription(description) {
+  const normalized = collapseText(description);
+  if (!normalized) {
+    return '';
+  }
+
+  const match = normalized.match(/tra cứu mã số thuế\s+[\d-]+\s*-\s*(.+)$/i);
+  return match ? collapseText(match[1]) : '';
+}
+
+function isLikelyTaxCodeQuery(query) {
+  return /^\d[\d-]*$/.test(normalizeText(query));
+}
+
+function isGenericStructuredName(name) {
+  const normalized = normalizeText(name);
+  return !normalized || /mã số thuế|tra cứu|masothue/i.test(normalized);
+}
+
+function extractStructuredDetailFromHtml(html) {
+  const $ = cheerio.load(html);
+  const titleData = extractTitleData($);
+  const description = extractMetaContent($, 'meta[name="description"]');
+  const canonical = extractMetaContent($, 'link[rel="canonical"]');
+  const jsonLdObjects = extractJsonLdObjects($);
+
+  const jsonLdCompany = jsonLdObjects.find((item) => {
+    if (!item || typeof item !== 'object') {
+      return false;
+    }
+
+    const typeValue = item['@type'];
+    const types = Array.isArray(typeValue) ? typeValue : [typeValue];
+    return types.some((type) => /organization|corporation|localbusiness|business/i.test(String(type || '')));
+  }) || null;
+
+  const structuredNameCandidate = collapseText(jsonLdCompany && (jsonLdCompany.name || jsonLdCompany.headline || jsonLdCompany.alternateName));
+  const structuredName = isGenericStructuredName(structuredNameCandidate) ? '' : structuredNameCandidate;
+  const structuredAddress = jsonLdCompany && jsonLdCompany.address;
+  const addressFromJsonLd = collapseText(
+    structuredAddress && typeof structuredAddress === 'object'
+      ? structuredAddress.streetAddress || structuredAddress.addressLocality || structuredAddress.addressRegion || structuredAddress.addressCountry
+      : structuredAddress
+  );
+  const descriptionAddress = extractAddressFromDescription(description);
+
+  const result = {
+    ten: structuredName || titleData.ten || '',
+    ma_so_thue: titleData.ma_so_thue || '',
+    nguoi_dai_dien: '',
+    tinh_trang: '',
+    quan_ly_boi: '',
+    dia_chi: addressFromJsonLd || descriptionAddress || ''
+  };
+
+  if (!result.ma_so_thue && canonical) {
+    const canonicalMatch = canonical.match(/\/(\d[\d-]*)-/);
+    if (canonicalMatch) {
+      result.ma_so_thue = canonicalMatch[1];
+    }
+  }
+
+  return { $, result };
 }
 
 function encodeQuery(value) {
@@ -47,6 +206,11 @@ function buildAjaxSearchUrl() {
 }
 
 async function fetchPageHtml(url, requestOptions = {}) {
+  const parsedUrl = new URL(url);
+  if (parsedUrl.hostname === 'masothue.com' || parsedUrl.hostname.endsWith('.masothue.com')) {
+    return fetchPageHtmlWithBrowser(url, requestOptions);
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const headers = {
@@ -107,6 +271,16 @@ async function fetchHtml(url) {
 }
 
 async function fetchSearchHtml(query, type = 'auto') {
+  try {
+    const searchResult = await searchViaAjax(query, type, '1');
+    if (searchResult && searchResult.url) {
+      const detailUrl = searchResult.url.startsWith('http') ? searchResult.url : `${BASE_URL}${searchResult.url}`;
+      return fetchPageHtml(detailUrl);
+    }
+  } catch (error) {
+    // Fall back to the search URL when the browser-backed AJAX flow fails.
+  }
+
   return fetchPageHtml(buildSearchUrl(query, type));
 }
 
@@ -179,50 +353,57 @@ async function fetchAjaxToken(initialCookie = '') {
 }
 
 async function searchViaAjax(query, type = 'auto', forceSearch = '1') {
-  // Prefetch homepage/search page to obtain initial cookies (PHPSESSID etc.)
-  let initialCookie = '';
-  try {
-    const pre = await fetchPageHtml(`${BASE_URL}/Search/`, { headers: { referer: `${BASE_URL}/` } });
-    const setCookieRaw = pre && pre.headers && pre.headers['set-cookie'] ? pre.headers['set-cookie'] : '';
-    if (setCookieRaw) {
-      const matches = [...String(setCookieRaw).matchAll(/(?:^|,\s*)([^=;,\s]+=[^;,\s]+)/g)];
-      initialCookie = matches.map((m) => m[1]).join('; ');
-    }
-  } catch (e) {
-    // ignore prefetch failures; we'll still try token/search
-  }
+  const safeQuery = String(query || '').trim();
 
-  const tk = await fetchAjaxToken(initialCookie);
-  const token = tk && tk.token ? tk.token : '';
-  const cookieHeader = tk && tk.cookie ? tk.cookie : '';
+  const result = await withBrowserPage(async (page) => {
+    await page.goto(`${BASE_URL}/`, { waitUntil: 'networkidle2' });
 
-  const body = new URLSearchParams({
-    q: String(query || '').trim(),
-    type,
-    token,
-    'force-search': String(forceSearch)
+    const payload = await page.evaluate(async ({ safeQuery, type, forceSearch }) => {
+      const postJson = async (path, body, referer) => {
+        const response = await fetch(path, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'x-requested-with': 'XMLHttpRequest',
+            accept: 'application/json, text/javascript, */*; q=0.01',
+            origin: location.origin,
+            referer
+          },
+          body
+        });
+
+        return {
+          status: response.status,
+          text: await response.text()
+        };
+      };
+
+      const tokenResponse = await postJson('/Ajax/Token', 'r=test', `${location.origin}/`);
+      const tokenData = JSON.parse(tokenResponse.text);
+      const searchBody = new URLSearchParams({
+        q: safeQuery,
+        type,
+        token: tokenData.token,
+        'force-search': String(forceSearch)
+      }).toString();
+      const searchResponse = await postJson('/Ajax/Search', searchBody, `${location.origin}/Search/?q=${encodeURIComponent(safeQuery)}&type=${type}`);
+      const searchData = JSON.parse(searchResponse.text);
+
+      return {
+        tokenData,
+        searchData,
+        searchStatus: searchResponse.status
+      };
+    }, { safeQuery, type, forceSearch });
+
+    return {
+      data: payload.searchData,
+      finalUrl: payload.searchData && payload.searchData.url ? new URL(payload.searchData.url, BASE_URL).href : `${BASE_URL}/Search/`,
+      headers: {}
+    };
   });
 
-  const headers = {
-    'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-    'x-requested-with': 'XMLHttpRequest',
-    accept: 'application/json, text/javascript, */*; q=0.01',
-    referer: `${BASE_URL}/Search/?q=${encodeQuery(query || '')}&type=${type}`,
-    origin: BASE_URL
-  };
-  if (cookieHeader) headers['cookie'] = cookieHeader;
-
-  const response = await fetchAjaxJson(buildAjaxSearchUrl(), {
-    method: 'POST',
-    headers,
-    body: body.toString()
-  }).catch((err) => {
-    const e = new Error(`searchViaAjax failed: ${err && err.message ? err.message : err}`);
-    e.cause = err;
-    throw e;
-  });
-
-  return response.data;
+  return result.data;
 }
 
 async function lookupViaSearchHtml(query, type = 'auto') {
@@ -231,6 +412,25 @@ async function lookupViaSearchHtml(query, type = 'auto') {
 
   if (isDetailPath(finalPath)) {
     const detail = extractDetailFromHtml(searchResponse.html);
+
+    if (isLikelyTaxCodeQuery(query) && normalizeText(detail.ma_so_thue) !== normalizeText(query)) {
+      const candidates = extractCandidatesFromSearchHtml(searchResponse.html);
+      const exactCandidate = candidates.find((candidate) => normalizeText(candidate.ma_so_thue) === normalizeText(query));
+
+      if (exactCandidate) {
+        const detailResponse = await fetchHtml(exactCandidate.href);
+        return {
+          source: detailResponse.finalUrl,
+          detail: extractDetailFromHtml(detailResponse.html),
+          searchHtml: searchResponse.html,
+          candidates: candidates.map((candidate) => ({
+            candidate,
+            score: scoreCandidate(candidate, query)
+          })).sort((left, right) => right.score - left.score)
+        };
+      }
+    }
+
     return {
       source: searchResponse.finalUrl,
       detail,
@@ -294,20 +494,8 @@ function parseLabelValueTable($) {
 }
 
 function extractDetailFromHtml(html) {
-  const $ = cheerio.load(html);
+  const { $, result } = extractStructuredDetailFromHtml(html);
   const tableData = parseLabelValueTable($);
-
-  const heading = collapseText($('h1').first().text());
-  const titleMatch = heading.match(/^(\d[\d-]*)\s*-\s*(.+)$/);
-
-  const result = {
-    ten: titleMatch ? titleMatch[2] : '',
-    ma_so_thue: titleMatch ? titleMatch[1] : '',
-    nguoi_dai_dien: tableData['Người đại diện'] || '',
-    tinh_trang: tableData['Tình trạng'] || '',
-    quan_ly_boi: tableData['Quản lý bởi'] || '',
-    dia_chi: tableData['Địa chỉ'] || tableData['Địa chỉ Thuế'] || ''
-  };
 
   if (!result.ma_so_thue) {
     const rowText = collapseText($('body').text());
@@ -316,6 +504,20 @@ function extractDetailFromHtml(html) {
       result.ma_so_thue = codeMatch[1];
     }
   }
+
+  if (!result.ten) {
+    const heading = collapseText($('h1').first().text());
+    const titleMatch = heading.match(/^(\d[\d-]*)\s*-\s*(.+)$/);
+    result.ten = titleMatch ? titleMatch[2] : result.ten;
+    if (!result.ma_so_thue && titleMatch) {
+      result.ma_so_thue = titleMatch[1];
+    }
+  }
+
+  result.nguoi_dai_dien = result.nguoi_dai_dien || tableData['Người đại diện'] || '';
+  result.tinh_trang = result.tinh_trang || tableData['Tình trạng'] || '';
+  result.quan_ly_boi = result.quan_ly_boi || tableData['Quản lý bởi'] || '';
+  result.dia_chi = result.dia_chi || tableData['Địa chỉ'] || tableData['Địa chỉ Thuế'] || '';
 
   return result;
 }
@@ -441,6 +643,7 @@ function extractCandidatesFromSearchHtml(html) {
 async function lookupMasothue(query, type = 'auto') {
   const safeQuery = String(query || '').trim();
   const safeType = SEARCH_TYPE_MAP[type] ? type : 'auto';
+  const effectiveType = isLikelyTaxCodeQuery(safeQuery) ? 'auto' : safeType;
 
   if (!safeQuery) {
     const error = new Error('Thiếu tham số query');
@@ -451,23 +654,28 @@ async function lookupMasothue(query, type = 'auto') {
   let ajaxResult = null;
   let source = `${BASE_URL}/Ajax/Search`;
   let parsedDetail = null;
+  let ajaxUrl = '';
 
   try {
-    ajaxResult = await searchViaAjax(safeQuery, safeType, '1');
-    const ajaxUrl = String(ajaxResult && ajaxResult.url ? ajaxResult.url : '').trim();
+    ajaxResult = await searchViaAjax(safeQuery, effectiveType, '1');
+    ajaxUrl = String(ajaxResult && ajaxResult.url ? ajaxResult.url : '').trim();
 
     if (ajaxResult && ajaxResult.success === 1 && ajaxUrl && ajaxUrl !== '/') {
       source = ajaxUrl.startsWith('http') ? ajaxUrl : `${BASE_URL}${ajaxUrl}`;
       const detailResponse = await fetchHtml(source);
       parsedDetail = extractDetailFromHtml(detailResponse.html);
       source = detailResponse.finalUrl;
+
+      if (isLikelyTaxCodeQuery(safeQuery) && normalizeText(parsedDetail && parsedDetail.ma_so_thue) !== normalizeText(safeQuery)) {
+        parsedDetail = null;
+      }
     }
   } catch (error) {
     ajaxResult = ajaxResult || null;
   }
 
   if (!parsedDetail) {
-    const fallback = await lookupViaSearchHtml(safeQuery, safeType);
+    const fallback = await lookupViaSearchHtml(safeQuery, effectiveType);
     source = fallback.source;
     parsedDetail = fallback.detail;
   }
@@ -487,7 +695,7 @@ async function lookupMasothue(query, type = 'auto') {
 
   const confidence = computeConfidence({
     query: safeQuery,
-    type: safeType,
+    type: effectiveType,
     ajaxResult,
     detail: parsedDetail
   });
@@ -504,7 +712,7 @@ async function lookupMasothue(query, type = 'auto') {
       query: safeQuery,
       type: safeType,
       url: ajaxUrl,
-      numRows: Number(ajaxResult.numRows || 0)
+      numRows: Number(ajaxResult && ajaxResult.numRows ? ajaxResult.numRows : 0)
     } : null,
     reason: strongMatch ? '' : 'Kết quả khớp chưa đủ mạnh để trả dữ liệu'
   };
