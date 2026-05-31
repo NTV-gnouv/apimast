@@ -139,14 +139,19 @@ async function fetchAjaxJson(url, options = {}) {
   return { data, finalUrl, headers };
 }
 
-async function fetchAjaxToken() {
+async function fetchAjaxToken(initialCookie = '') {
+  const headers = {
+    'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+    'x-requested-with': 'XMLHttpRequest',
+    accept: 'application/json, text/javascript, */*; q=0.01',
+    referer: `${BASE_URL}/`,
+    origin: BASE_URL
+  };
+  if (initialCookie) headers.cookie = initialCookie;
+
   const response = await fetchAjaxJson(buildAjaxTokenUrl(), {
     method: 'POST',
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-      'x-requested-with': 'XMLHttpRequest',
-      accept: 'application/json, text/javascript, */*; q=0.01'
-    },
+    headers,
     body: `r=${encodeQuery(Math.random().toString(36).slice(2))}`
   }).catch((err) => {
     throw new Error(`fetchAjaxToken failed: ${err && err.message ? err.message : err}`);
@@ -166,11 +171,28 @@ async function fetchAjaxToken() {
     cookie = matches.map((m) => m[1]).join('; ');
   }
 
+  // Merge with initialCookie if provided (avoid duplicate keys by simple concatenation)
+  if (initialCookie && cookie) cookie = `${initialCookie}; ${cookie}`;
+  else if (initialCookie && !cookie) cookie = initialCookie;
+
   return { token: response.data.token, cookie };
 }
 
 async function searchViaAjax(query, type = 'auto', forceSearch = '1') {
-  const tk = await fetchAjaxToken();
+  // Prefetch homepage/search page to obtain initial cookies (PHPSESSID etc.)
+  let initialCookie = '';
+  try {
+    const pre = await fetchPageHtml(`${BASE_URL}/Search/`, { headers: { referer: `${BASE_URL}/` } });
+    const setCookieRaw = pre && pre.headers && pre.headers['set-cookie'] ? pre.headers['set-cookie'] : '';
+    if (setCookieRaw) {
+      const matches = [...String(setCookieRaw).matchAll(/(?:^|,\s*)([^=;,\s]+=[^;,\s]+)/g)];
+      initialCookie = matches.map((m) => m[1]).join('; ');
+    }
+  } catch (e) {
+    // ignore prefetch failures; we'll still try token/search
+  }
+
+  const tk = await fetchAjaxToken(initialCookie);
   const token = tk && tk.token ? tk.token : '';
   const cookieHeader = tk && tk.cookie ? tk.cookie : '';
 
@@ -184,7 +206,9 @@ async function searchViaAjax(query, type = 'auto', forceSearch = '1') {
   const headers = {
     'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
     'x-requested-with': 'XMLHttpRequest',
-    accept: 'application/json, text/javascript, */*; q=0.01'
+    accept: 'application/json, text/javascript, */*; q=0.01',
+    referer: `${BASE_URL}/Search/?q=${encodeQuery(query || '')}&type=${type}`,
+    origin: BASE_URL
   };
   if (cookieHeader) headers['cookie'] = cookieHeader;
 
@@ -193,7 +217,6 @@ async function searchViaAjax(query, type = 'auto', forceSearch = '1') {
     headers,
     body: body.toString()
   }).catch((err) => {
-    // rethrow with context
     const e = new Error(`searchViaAjax failed: ${err && err.message ? err.message : err}`);
     e.cause = err;
     throw e;
