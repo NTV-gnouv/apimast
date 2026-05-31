@@ -60,6 +60,38 @@ app.get('/api/lookup', async (req, res) => {
   }
 });
 
+// Debug endpoint: returns detailed response/error info from lookup (for debugging on deployments)
+app.get('/api/debug-lookup', async (req, res) => {
+  try {
+    const query = req.query.q || req.query.query;
+    const type = req.query.type || 'auto';
+    const result = await lookupMasothue(query, type);
+
+    res.json({
+      ok: true,
+      debug: true,
+      query: String(query || ''),
+      type: String(type || 'auto'),
+      result
+    });
+  } catch (error) {
+    // include any debug fields our lookup throws (contentType, htmlSnippet, headers)
+    const status = Number(error.status || 500);
+    const payload = {
+      ok: false,
+      error: error.message || 'Unknown error',
+      status,
+      debug: true
+    };
+    if (error.contentType) payload.contentType = error.contentType;
+    if (error.htmlSnippet) payload.htmlSnippet = String(error.htmlSnippet).slice(0, 2000);
+    if (error.headers) payload.headers = error.headers;
+    if (error.cause && error.cause.message) payload.cause = error.cause.message;
+
+    res.status(status).json(payload);
+  }
+});
+
 app.get('/api/company/:taxCode', async (req, res) => {
   try {
     const result = await lookupMasothue(req.params.taxCode, 'auto');
