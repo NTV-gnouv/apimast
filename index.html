@@ -290,12 +290,31 @@
       const stateBadge = document.getElementById('stateBadge');
       const cards = document.getElementById('cards');
       const raw = document.getElementById('raw');
+      const CLIENT_TIMEOUT_MS = 20000;
+
+      let activeRequestController = null;
+      let activeSearchId = 0;
 
       apiBaseLabel.textContent = apiBase.replace(/(^https?:\/\/)/, '');
 
       function setBadge(text, error = false) {
         stateBadge.textContent = text;
         stateBadge.classList.toggle('error', error);
+      }
+
+      function startLoadingTimer(searchId) {
+        const loadingStartTime = Date.now();
+        const loadingTimerId = setInterval(() => {
+          if (activeSearchId !== searchId) {
+            clearInterval(loadingTimerId);
+            return;
+          }
+
+          const elapsedSeconds = ((Date.now() - loadingStartTime) / 1000).toFixed(1);
+          setBadge(`Đang tra cứu... ${elapsedSeconds}s`);
+        }, 250);
+
+        return loadingTimerId;
       }
 
       function renderResult(payload) {
@@ -348,22 +367,58 @@
           return;
         }
 
+        if (activeRequestController) {
+          activeRequestController.abort();
+        }
+
+        const searchId = ++activeSearchId;
+        const controller = new AbortController();
+        activeRequestController = controller;
+        searchBtn.disabled = true;
+
         setBadge('Đang tra cứu...');
         cards.innerHTML = '';
         raw.textContent = 'Đang tải...';
+        const loadingTimerId = startLoadingTimer(searchId);
 
         const url = new URL(`${apiBase}/api/lookup`);
         url.searchParams.set('q', query);
         url.searchParams.set('type', type);
 
+        const timeoutId = setTimeout(() => {
+          if (activeRequestController === controller) {
+            controller.abort();
+          }
+        }, CLIENT_TIMEOUT_MS);
+
         try {
-          const response = await fetch(url);
+          const response = await fetch(url, {
+            signal: controller.signal,
+            cache: 'no-store'
+          });
           const payload = await response.json();
-          renderResult(payload);
+          if (activeSearchId === searchId) {
+            renderResult(payload);
+          }
         } catch (error) {
-          setBadge('Lỗi kết nối', true);
-          cards.innerHTML = '';
-          raw.textContent = String(error);
+          const isAbortError = error && error.name === 'AbortError';
+          if (activeSearchId === searchId) {
+            setBadge(isAbortError ? 'Quá thời gian chờ' : 'Lỗi kết nối', true);
+            cards.innerHTML = '';
+            raw.textContent = isAbortError
+              ? `Yêu cầu tra cứu vượt quá ${CLIENT_TIMEOUT_MS / 1000}s.`
+              : String(error);
+          }
+        } finally {
+          clearTimeout(timeoutId);
+          clearInterval(loadingTimerId);
+
+          if (activeSearchId === searchId) {
+            searchBtn.disabled = false;
+            if (activeRequestController === controller) {
+              activeRequestController = null;
+            }
+          }
         }
       }
 

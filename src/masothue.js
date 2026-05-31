@@ -44,6 +44,8 @@ const SEARCH_TYPE_MAP = {
   legalName: 'legalName'
 };
 
+let browserInstancePromise = null;
+
 function normalizeText(value) {
   return String(value || '')
     .replace(/\s+/g, ' ')
@@ -79,11 +81,28 @@ async function withBrowserPage(callback) {
     throw error;
   }
 
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    executablePath,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
+  if (!browserInstancePromise) {
+    browserInstancePromise = puppeteer.launch({
+      headless: 'new',
+      executablePath,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    }).then((browser) => {
+      browser.once('disconnected', () => {
+        browserInstancePromise = null;
+      });
+
+      return browser;
+    }).catch((error) => {
+      browserInstancePromise = null;
+      throw error;
+    });
+  }
+
+  let browser = await browserInstancePromise;
+  if (!browser.isConnected()) {
+    browserInstancePromise = null;
+    return withBrowserPage(callback);
+  }
 
   const page = await browser.newPage();
   await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
@@ -91,6 +110,7 @@ async function withBrowserPage(callback) {
     'accept-language': 'vi-VN,vi;q=0.9,en;q=0.8'
   });
   page.setDefaultNavigationTimeout(REQUEST_TIMEOUT_MS);
+  page.setDefaultTimeout(REQUEST_TIMEOUT_MS);
 
   try {
     return await callback(page);
@@ -100,18 +120,32 @@ async function withBrowserPage(callback) {
     } catch (error) {
       // ignore browser cleanup errors
     }
-
-    try {
-      await browser.close();
-    } catch (error) {
-      // ignore browser cleanup errors
-    }
   }
+}
+
+async function closeBrowser() {
+  if (!browserInstancePromise) {
+    return;
+  }
+
+  const browserPromise = browserInstancePromise;
+  browserInstancePromise = null;
+
+  try {
+    const browser = await browserPromise;
+    await browser.close();
+  } catch (error) {
+    // ignore shutdown errors
+  }
+}
+
+function isMasothueHostname(hostname) {
+  return hostname === 'masothue.com' || hostname.endsWith('.masothue.com');
 }
 
 async function fetchPageHtmlWithBrowser(url) {
   const result = await withBrowserPage(async (page) => {
-    await page.goto(url, { waitUntil: 'networkidle2' });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: REQUEST_TIMEOUT_MS });
     return {
       html: await page.content(),
       finalUrl: page.url(),
@@ -407,7 +441,7 @@ async function searchViaAjax(query, type = 'auto', forceSearch = '1') {
   const safeQuery = String(query || '').trim();
 
   const result = await withBrowserPage(async (page) => {
-    await page.goto(`${BASE_URL}/`, { waitUntil: 'networkidle2' });
+    await page.goto(`${BASE_URL}/`, { waitUntil: 'domcontentloaded', timeout: REQUEST_TIMEOUT_MS });
 
     const payload = await page.evaluate(async ({ safeQuery, type, forceSearch }) => {
       const postJson = async (path, body, referer) => {
@@ -777,5 +811,6 @@ module.exports = {
   searchViaAjax,
   fetchAjaxToken,
   computeConfidence,
-  isStrongMatch
+  isStrongMatch,
+  closeBrowser
 };
